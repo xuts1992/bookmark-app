@@ -1,0 +1,33 @@
+# 数据文件
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Go 编译产物
+backend/bookmark-server
+backend/bookmark-server.exe
+backend/bookmarks.db 
+
+# 前端依赖 / 构建缓存
+node_modules/
+web/dist/
+
+# Vue 构建输出（由 npm run build 生成到 backend/static，属于构建产物）
+backend/static/
+
+
+# IDE
+.idea/
+.vscode/
+
+# 本机自包含构建脚本（含本机专属绝对路径，不提交）
+build-self.bat
+dev-self.bat
+
+
+# 其他
+backend/.log
+backend/resource/ 
+backend/tray/*.exe
+build/
