@@ -1,12 +1,17 @@
 <script setup>
 // 逻辑已抽到 src/composables：useApp（主逻辑）、useAdminRoute（admin 路由）、filters（URL 筛选持久化）
 // 这里仅做薄壳：引入 useApp 并解构模板所需的全部绑定。模板保持原样。
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import BookmarkItem from './components/BookmarkItem.vue'
 import VideoGrid from './components/VideoGrid.vue'
 import AdminView from './components/AdminView.vue'
 import DetailView from './components/DetailView.vue'
 import AllTag from './components/AllTag.vue'
+import FabToolbar from './components/FabToolbar.vue'
+import FilterSidebar from './components/FilterSidebar.vue'
+import BatchSidebar from './components/BatchSidebar.vue'
+import BookmarkForm from './components/BookmarkForm.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { useApp } from './composables/useApp.js'
 
 const {
@@ -27,7 +32,8 @@ const {
   toggleCategory,
   goAdmin, selectTag, closeForm, submitForm, onUrlBlur, onPreviewError,
   toggleFavoriteFilter, toggleFavorite, saveDetail,
-  batchOpen, toggleBatch, batchApply, refresh
+  batchOpen, toggleBatch, batchApply, refresh,
+  currentFilter,
 } = useApp()
 
 // —— 吸顶（纯 JS 实现，不使用 CSS 静态规则）——
@@ -112,25 +118,112 @@ onBeforeUnmount(() => {
   if (rafId) window.cancelAnimationFrame(rafId)
 })
 
-// 批量侧边栏的本地 UI 状态
-const batchCategory = ref(null)   // 设置分类：null=不修改，0=默认，否则分类 id
-const batchTagMode = ref('add')   // 标签操作模式：add / remove
-const batchTagIds = ref([])       // 选中的标签 id
+// 批量侧边栏的本地 UI 状态（batchCategory/batchTagMode 已在 BatchSidebar 组件内自持）
+const batchTagIds = ref([])       // 选中的标签 id（AllTag 弹窗共用）
 const showAllTag = ref(false)     // 是否弹出「全部标签」选择窗
-// 切换某个标签的选中状态（批量侧边栏与 AllTag 弹窗共用）
+// 已选标签的切换（批量侧边栏与 AllTag 弹窗共用）
 function toggleBatchTag(id) {
   const i = batchTagIds.value.indexOf(id)
   if (i >= 0) batchTagIds.value.splice(i, 1)
   else batchTagIds.value.push(id)
 }
-// 已选标签对象列表（用于在侧边栏展示名称）
-const selectedTagList = computed(() =>
-  batchTagIds.value.map((id) => allTags.value.find((t) => t.id === id)).filter(Boolean)
-)
-function confirmBatchDelete() {
-  if (window.confirm(`确定要删除当前筛选条件下的全部 ${totalCount} 条书签吗？此操作不可恢复！`)) {
-    batchApply({ delete: true })
+
+// —— 自定义警告/确认弹窗（ConfirmDialog）——
+const confirmState = ref(null) // { title, message, danger, onConfirm, highlight }
+function showConfirm(title, message, onConfirm, danger = false, highlight = '') {
+  confirmState.value = { title, message, danger, onConfirm, highlight }
+}
+function cancelConfirm() {
+  confirmState.value = null
+}
+function doConfirm() {
+  const fn = confirmState.value && confirmState.value.onConfirm
+  confirmState.value = null
+  if (fn) fn()
+}
+
+// 当前是否存在任何筛选条件（分类/标签/搜索/只看常用/视频视图）
+function hasAnyFilter() {
+  return (
+    filterCategory.value != null ||
+    filterTags.value.length > 0 ||
+    searchQuery.value.trim() !== '' ||
+    filterFavorite.value ||
+    displayMode.value === 'video'
+  )
+}
+
+// 批量操作入口：任何批量修改（设置分类/标签/收藏）前都弹确认，显示操作描述与目标条数，避免误操作
+function applyBatch(ops) {
+  if (ops.delete) {
+    confirmBatchDelete()
+    return
   }
+  const hasFilter = hasAnyFilter()
+  const desc = batchOpDesc(ops)
+  const tip = hasFilter
+    ? `将对当前筛选条件下的 ${totalCount.value} 条书签执行「${desc}」。`
+    : `当前没有任何筛选条件，将对全部 ${totalCount.value} 条书签执行「${desc}」。`
+  showConfirm(
+    `确认批量${desc}？`,
+    `${tip}\n确定要继续吗？`,
+    () => batchApply(ops),
+    false,
+    `${totalCount.value} 条书签`
+  )
+}
+
+// 根据批量操作参数生成中文描述
+function batchOpDesc(ops) {
+  if (ops.set_category != null) {
+    if (ops.set_category === 0) return '设置分类为「默认」'
+    const c = categories.value.find((c) => c.id === ops.set_category)
+    return `设置分类为「${c ? c.name : ops.set_category}」`
+  }
+  if (ops.add_tags) return `添加 ${ops.add_tags.length} 个标签`
+  if (ops.remove_tags) return `移除 ${ops.remove_tags.length} 个标签`
+  if (ops.favorite === true) return '全部标记为收藏'
+  if (ops.favorite === false) return '全部取消收藏'
+  return '批量修改'
+}
+
+// 一键删除（同样使用自定义确认弹窗，危险样式）
+function confirmBatchDelete() {
+  showConfirm(
+    '⚠️ 一键删除（不可恢复）',
+    `确定要删除当前筛选条件下的全部 ${totalCount.value} 条书签吗？此操作不可恢复！`,
+    () => batchApply({ delete: true }),
+    true,
+    `${totalCount.value} 条书签`
+  )
+}
+
+// 导出：弹确认显示将导出的条数，确认后下载 Excel（.xlsx，筛选参数与列表/批量一致）
+function handleExport() {
+  const hasFilter = hasAnyFilter()
+  const scope = hasFilter ? '当前筛选条件下的' : '全部'
+  showConfirm(
+    '确认导出？',
+    `将导出${scope} ${totalCount.value} 条书签（Excel 文件）。\n确定要继续吗？`,
+    () => {
+      const f = currentFilter()
+      const p = new URLSearchParams()
+      if (f.category_id != null) p.set('category_id', f.category_id)
+      ;(f.tag_ids || []).forEach((id) => p.append('tag_id', id))
+      if (f.is_video) p.set('is_video', '1')
+      if (f.favorite) p.set('favorite', '1')
+      if (f.q) p.set('q', f.q)
+      const qs = p.toString()
+      const a = document.createElement('a')
+      a.href = `/api/export${qs ? '?' + qs : ''}`
+      a.download = ''
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    },
+    false,
+    `${totalCount.value} 条书签`
+  )
 }
 </script>
 
@@ -279,202 +372,49 @@ function confirmBatchDelete() {
       </button>
     </div>
 
-    <!-- 左侧刷新按钮：点击重新加载书签/分类/统计；位于批量按钮上方 -->
-    <button
-      class="refresh-fab"
-      :class="{ shifted: sidebarOpen || batchOpen }"
-      :disabled="batchOpen"
-      @click="refresh"
-      title="刷新"
-      aria-label="刷新"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22">
-        <path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-      </svg>
-    </button>
-
-    <!-- 左侧批量操作按钮：点击打开批量侧边栏；位于收藏按钮上方 -->
-    <button
-      class="batch-fab"
-      :class="{ shifted: sidebarOpen || batchOpen }"
-      :disabled="sidebarOpen"
-      @click="toggleBatch"
-      title="批量操作"
-      aria-label="批量操作"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22">
-        <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-      </svg>
-    </button>
-
-    <!-- 左侧收藏按钮：点击筛选「只看常用」；位于侧边栏按钮上方 -->
-    <button
-      class="favorite-fab"
-      :class="{ shifted: sidebarOpen || batchOpen, active: filterFavorite }"
-      @click="toggleFavoriteFilter"
-      title="只看常用"
-      aria-label="只看常用"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22">
-        <path fill="currentColor" d="M12 17.27l5.18 3.15c.42.26.97-.1.86-.57l-1.37-5.94 4.6-3.99c.39-.34.18-.97-.36-.99l-6.05-.52-2.36-5.58c-.2-.47-.84-.47-1.04 0L9.14 8.31l-6.05.52c-.54.02-.75.65-.36.99l4.6 3.99-1.37 5.94c-.11.47.44.83.86.57L12 17.27z" />
-      </svg>
-    </button>
-
-    <!-- 左侧圆形按钮：点击从左侧滑出筛选侧边栏 -->
-    <button
-      class="sidebar-fab"
-      :class="{ shifted: sidebarOpen || batchOpen }"
-      :disabled="batchOpen"
-      @click="toggleSidebar"
-      title="筛选分类 / 标签"
-      aria-label="打开筛选侧边栏"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22">
-        <path fill="currentColor" d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11z" />
-      </svg>
-    </button>
-
-    <!-- 左侧管理按钮：点击跳转管理后台 -->
-    <button
-      class="admin-fab"
-      :class="{ shifted: sidebarOpen || batchOpen }"
-      @click="goAdmin"
-      title="管理后台"
-      aria-label="打开管理后台"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22">
-        <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.03 7.03 0 00-1.62-.94l-.36-2.54a.5.5 0 00-.5-.42h-3.84a.5.5 0 00-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 00-.6.22L2.71 8.84a.5.5 0 00.12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 00-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.21.09.47 0 .6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z" />
-      </svg>
-    </button>
+    <!-- 左侧按钮工具条：刷新/批量/收藏/筛选/管理/导出 -->
+    <FabToolbar
+      :sidebar-open="sidebarOpen"
+      :batch-open="batchOpen"
+      :filter-favorite="filterFavorite"
+      @refresh="refresh"
+      @toggle-batch="toggleBatch"
+      @toggle-favorite-filter="toggleFavoriteFilter"
+      @toggle-sidebar="toggleSidebar"
+      @go-admin="goAdmin"
+      @export="handleExport"
+    />
 
     <!-- 两个侧边栏（分类/标签筛选、批量操作）均为推开式，不使用遮罩；点击主区域不关闭，靠各自 ✕ 或 Esc 关闭 -->
 
     <!-- 左侧筛选侧边栏：分类(一级) → 标签(二级)（推开式，不覆盖主内容） -->
-    <aside class="sidebar" :class="{ open: sidebarOpen }">
-      <div class="sidebar-head">
-        <span class="sidebar-title">分类 / 标签</span>
-        <button class="sidebar-close" @click="sidebarOpen = false" aria-label="关闭">✕</button>
-      </div>
-      <div class="sidebar-body">
-        <div class="sidebar-search">
-          <input
-            type="text"
-            v-model="sidebarTagQuery"
-            placeholder="搜索标签..."
-          />
-          <button
-            v-if="sidebarTagQuery"
-            class="sidebar-search-clear"
-            @click="sidebarTagQuery = ''"
-            aria-label="清空搜索"
-            title="清空"
-          >✕</button>
-        </div>
-        <button class="tree-cat all" :class="{ active: !filterCategory && filterTags.length === 0 }" @click="clearFilter">
-          全部书签
-        </button>
-        <div class="tree-node" v-for="cat in filteredTree" :key="cat.id">
-          <div class="tree-cat-row">
-            <button
-              type="button"
-              class="tree-toggle"
-              @click="toggleCategory(cat.id)"
-              :aria-label="expanded[cat.id] ? '收起' : '展开'"
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" :class="{ rotated: expanded[cat.id] }">
-                <path fill="currentColor" d="M9 6l6 6-6 6z" />
-              </svg>
-            </button>
-            <span
-              class="tree-cat label"
-              @click="toggleCategory(cat.id)"
-            >
-              {{ cat.name }}
-            </span>
-          </div>
-          <div class="tree-tags" v-show="expanded[cat.id]">
-            <button
-              v-for="t in cat.tags"
-              :key="t.id"
-              class="tree-tag"
-              :class="{ active: filterTags.includes(t.id) }"
-              @click="selectTag(t)"
-            >
-              # {{ t.name }}
-            </button>
-            <span v-if="cat.tags.length === 0" class="tree-tag-empty">暂无标签</span>
-          </div>
-        </div>
-        <div class="sidebar-empty" v-if="filteredTree.length === 0 && sidebarTagQuery">未找到匹配标签</div>
-      </div>
-    </aside>
+    <FilterSidebar
+      :open="sidebarOpen"
+      :sidebar-tag-query="sidebarTagQuery"
+      :filtered-tree="filteredTree"
+      :expanded="expanded"
+      :filter-category="filterCategory"
+      :filter-tags="filterTags"
+      @close="sidebarOpen = false"
+      @update:sidebar-tag-query="sidebarTagQuery = $event"
+      @clear-filter="clearFilter"
+      @toggle-category="toggleCategory"
+      @select-tag="selectTag"
+    />
 
-    <!-- 批量操作侧边栏（仿标签侧边栏）：对当前筛选条件下所有匹配数据生效 -->
-    <aside class="sidebar batch-sidebar" :class="{ open: batchOpen }">
-      <div class="sidebar-head">
-        <span class="sidebar-title">批量操作</span>
-        <button class="sidebar-close" @click="batchOpen = false" aria-label="关闭">✕</button>
-      </div>
-      <div class="sidebar-body batch-body">
-        <p class="batch-hint">将对当前筛选条件下的 <b>{{ totalCount }}</b> 条书签生效（作用于全部匹配，不仅是当前页展示）。</p>
-
-        <!-- 设置分类 -->
-        <div class="batch-section">
-          <div class="batch-section-title">设置分类</div>
-          <select class="batch-select" v-model="batchCategory">
-            <option :value="null">（不修改）</option>
-            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
-            <option :value="0">默认</option>
-          </select>
-          <button class="batch-apply" :disabled="batchCategory === null" @click="batchApply({ set_category: batchCategory })">应用分类</button>
-        </div>
-
-        <!-- 标签：添加 / 移除（通过 AllTag 弹窗选标签，侧边栏仅展示已选） -->
-        <div class="batch-section">
-          <div class="batch-section-title">标签</div>
-          <div class="batch-tag-mode">
-            <label><input type="radio" value="add" v-model="batchTagMode" /> 添加</label>
-            <label><input type="radio" value="remove" v-model="batchTagMode" /> 移除</label>
-          </div>
-          <!-- 已选标签（点击可取消） -->
-          <div class="batch-selected" v-if="selectedTagList.length">
-            <button
-              v-for="t in selectedTagList"
-              :key="t.id"
-              class="batch-chip"
-              :title="'点击取消选择'"
-              @click="toggleBatchTag(t.id)"
-            ># {{ t.name }} ✕</button>
-          </div>
-          <div class="batch-tag-empty" v-else>尚未选择标签</div>
-          <!-- 打开全部标签弹窗的按钮（图标） -->
-          <button class="batch-browsetags" @click="showAllTag = true">
-            <svg viewBox="0 0 24 24" width="18" height="18">
-              <path fill="currentColor" d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM6.5 8C5.67 8 5 7.33 5 6.5S5.67 5 6.5 5 8 5.67 8 6.5 7.33 8 6.5 8z" />
-            </svg>
-            浏览全部标签
-          </button>
-          <button
-            class="batch-apply"
-            :disabled="batchTagIds.length === 0"
-            @click="batchTagMode === 'add' ? batchApply({ add_tags: batchTagIds }) : batchApply({ remove_tags: batchTagIds })"
-          >{{ batchTagMode === 'add' ? '添加标签' : '移除标签' }}</button>
-        </div>
-
-        <!-- 一键收藏 -->
-        <div class="batch-section">
-          <div class="batch-section-title">收藏</div>
-          <button class="batch-apply wide" @click="batchApply({ favorite: true })">★ 全部标记为收藏</button>
-          <button class="batch-apply wide" @click="batchApply({ favorite: false })">☆ 全部取消收藏</button>
-        </div>
-
-        <!-- 一键删除 -->
-        <div class="batch-section">
-          <div class="batch-section-title">删除</div>
-          <button class="batch-danger" @click="confirmBatchDelete">🗑 一键删除（不可恢复）</button>
-        </div>
-      </div>
-    </aside>
+    <!-- 批量操作侧边栏（对当前筛选条件下所有匹配数据生效） -->
+    <BatchSidebar
+      :open="batchOpen"
+      :total-count="totalCount"
+      :categories="categories"
+      :all-tags="allTags"
+      :batch-tag-ids="batchTagIds"
+      @close="batchOpen = false"
+      @apply="applyBatch"
+      @toggle-tag="toggleBatchTag"
+      @browse-tags="showAllTag = true"
+      @confirm-delete="confirmBatchDelete"
+    />
 
     <!-- 全部标签弹窗：分类别展示 + 搜索，点击标签即在批量侧边栏选中 -->
     <AllTag
@@ -488,75 +428,32 @@ function confirmBatchDelete() {
     </template>
 
     <!-- 新增 / 编辑 弹窗（全局：主页面与管理后台共用） -->
-    <div class="modal-mask" v-if="showForm" @click.self="closeForm">
-      <div class="modal">
-        <div class="modal-title">{{ editing ? '编辑书签' : '添加书签' }}</div>
-        <form @submit.prevent="submitForm">
-          <label>
-            标题 *
-            <input v-model="form.title" type="text" placeholder="例如：GitHub" />
-          </label>
-          <label>
-            网址 * (URL)
-            <input v-model="form.url" type="text" placeholder="https://..." />
-          </label>
-          <label>
-            图标 (可选)
-            <input v-model="form.favicon" type="text" placeholder="https://.../favicon.ico" @blur="onUrlBlur" />
-            <img v-if="form.favicon.trim()" :src="form.favicon" class="field-preview" alt="图标预览" @error="onPreviewError" />
-          </label>
-          <label>
-            作者 (可选)
-            <input v-model="form.author" type="text" placeholder="作者 / 来源" />
-          </label>
-          <label>
-            合集 (可选)
-            <input v-model="form.collection" type="text" placeholder="所属合集 / 系列" />
-          </label>
-          <label>
-            封面图 (可选)
-            <input v-model="form.cover" type="text" placeholder="https://.../cover.jpg" />
-            <img v-if="form.cover.trim()" :src="form.cover" class="field-preview cover" alt="封面预览" @error="onPreviewError" />
-          </label>
-          <div class="video-flag-row">
-            <label class="video-flag">
-              <input type="checkbox" v-model="form.isVideo" />
-              标记为视频（在「视频」视图中以 Bilibili 风格卡片展示）
-            </label>
-            <label class="duration-field" v-if="form.isVideo">
-              时长 (可选)
-              <input v-model="form.duration" type="text" placeholder="如 12:34" />
-            </label>
-          </div>
-          <label>
-            分类 (可选)
-            <select v-model="form.categoryId">
-              <option :value="null">默认</option>
-              <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
-          </label>
-          <div class="tag-picker">
-            <div class="tag-picker-title">标签 (可多选)</div>
-            <div class="tag-options">
-              <label v-for="t in formTagOptions" :key="t.id" class="tag-check">
-                <input type="checkbox" :value="t.id" v-model="form.tagIds" />
-                {{ t.name }}
-              </label>
-              <span v-if="formTagOptions.length === 0" class="tag-empty">该分类下暂无标签</span>
-            </div>
-          </div>
-          <div class="form-error" v-if="formError">{{ formError }}</div>
-          <div class="modal-actions">
-            <button type="button" class="btn-cancel" @click="closeForm">取消</button>
-            <button type="submit" class="btn-submit" :disabled="submitting">
-              {{ submitting ? '保存中...' : (editing ? '保存修改' : '添加') }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <BookmarkForm
+      :show-form="showForm"
+      :editing="editing"
+      :submitting="submitting"
+      :form="form"
+      :form-error="formError"
+      :categories="categories"
+      :form-tag-options="formTagOptions"
+      @close="closeForm"
+      @submit="submitForm"
+      @url-blur="onUrlBlur"
+      @preview-error="onPreviewError"
+    />
 
     <div class="toast" :class="{ show: toastShow }">{{ toastMsg }}</div>
+
+    <!-- 自定义警告/确认弹窗（批量无筛选、一键删除等） -->
+    <ConfirmDialog
+      v-if="confirmState"
+      :title="confirmState.title"
+      :message="confirmState.message"
+      :danger="confirmState.danger"
+      :highlight="confirmState.highlight"
+      @confirm="doConfirm"
+      @cancel="cancelConfirm"
+    />
   </div>
 </template>
 

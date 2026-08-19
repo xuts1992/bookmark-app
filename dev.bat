@@ -2,8 +2,8 @@
 chcp 65001 >nul
 REM ============================================================
 REM  网页收藏助手 - 开发模式一键启动 (dev.bat)
-REM  同时拉起 Go 后端 (9000) 与 Vue 前端开发服务器 (3000)
-REM  前端通过 Vite 把 /api、/resource 代理到后端 9000，无需构建
+REM  同时拉起 Go 后端 (9800) 与 Vue 前端开发服务器 (3000)
+REM  前端通过 Vite 把 /api、/resource 代理到后端 9800，无需构建
 REM  用法：双击本文件，或命令行执行 dev.bat
 REM ============================================================
 
@@ -24,19 +24,20 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 echo ====================================
 echo   网页收藏助手 - 开发模式启动
-echo   后端 : http://localhost:9000
+echo   后端 : http://localhost:9800
 echo   前端 : http://localhost:3000
 echo ====================================
 echo.
 
-REM ---- 若 9000 端口已被占用，提示先关闭 ----
-netstat -ano 2>nul | findstr ":9000" >nul
+REM ---- 若 9800 端口已被占用，提示先关闭 ----
+netstat -ano 2>nul | findstr ":9800" >nul
 if %errorlevel% equ 0 (
-  echo [提示] 9000 端口似乎已被占用，新后端可能无法启动。请先关闭占用该端口的程序。
+  echo [提示] 9800 端口似乎已被占用，新后端可能无法启动。请先关闭占用该端口的程序。
 )
 
-REM ---- 停止可能已运行的构建版服务，避免端口冲突 ----
+REM ---- 停止可能已运行的构建版服务/托盘，避免端口冲突 ----
 taskkill /F /IM bookmark-server.exe >nul 2>&1
+taskkill /F /IM start.exe >nul 2>&1
 
 REM ---- 前端依赖未安装则先安装 ----
 if not exist "%ROOT%\web\node_modules" (
@@ -46,9 +47,14 @@ if not exist "%ROOT%\web\node_modules" (
   popd
 )
 
+REM ---- go embed 编译需要 backend/static 存在，缺失时提示 ----
+if exist "%ROOT%\backend\static\index.html" goto static_ok
+echo [提示] backend\static 不存在（go embed 编译需要），请先执行 npm run build 或 build.bat 生成。
+:static_ok
+
 REM ---- 启动后端 (Go) ----
-echo [后端] 启动 Go 服务 (go run .)  -^>  http://localhost:9000
-start "bookmark-backend" /D "%ROOT%\backend" cmd /k "go run ."
+echo [后端] 启动 Go 服务 (go run .)  -^>  http://localhost:9800
+start "bookmark-backend" /D "%ROOT%\backend" cmd /k go run . server -port 9800
 
 REM ---- 启动前端 (Vue dev) ----
 echo [前端] 启动 Vue 开发服务器 (npm run dev)  -^>  http://localhost:3000

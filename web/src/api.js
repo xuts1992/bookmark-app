@@ -1,6 +1,6 @@
 // 与后端通信的 API 封装。
-// 开发时（Vite 3000）通过 vite proxy 把 /api 转发到 Go 9000；
-// 构建后（Go 9000 同源）直接请求 /api，无需额外配置。
+// 开发时（Vite 3000）通过 vite proxy 把 /api 转发到 Go 9800；
+// 构建后（Go 9800 同源）直接请求 /api，无需额外配置。
 const BASE = '/api'
 
 async function request(method, path, body) {
@@ -60,6 +60,12 @@ export const api = {
   favorite: (id, v) => request('PUT', `/bookmarks/${id}/favorite`, { favorite: v }),
   updateDetail: (id, content) => request('PUT', `/bookmarks/${id}/detail`, { content }),
   remove: (id) => request('DELETE', `/bookmarks/${id}`),
+  // 回收站：列表 / 恢复 / 彻底删除
+  trash: () => request('GET', '/trash'),
+  restoreTrash: (id) => request('PUT', `/trash/${id}/restore`),
+  purgeTrash: (id) => request('DELETE', `/trash/${id}`),
+  // 默认配置中受保护的分类/标签（删除前查询，禁止删除）
+  protected: () => request('GET', '/protected'),
   // 批量操作：对「当前筛选条件」下所有匹配的书签生效（filter + 操作）
   batch: (payload) => request('POST', '/bookmarks/batch', payload),
   // 资源同步设置

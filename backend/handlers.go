@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
 
@@ -123,13 +125,11 @@ func createBookmark(c *gin.Context) {
 		return
 	}
 	def := getDefaultCategory(DB)
-
 	var b Bookmark
 	res := DB.Where("url = ?", inp.URL).First(&b)
 	if res.Error == nil {
 		// 已存在 → 更新
 		b.Title = inp.Title
-		b.Favicon = downloadIcon(inp.URL, inp.Favicon, 15*time.Second)
 		if inp.CategoryID != nil {
 			b.CategoryID = inp.CategoryID
 		}
@@ -138,13 +138,8 @@ func createBookmark(c *gin.Context) {
 		if inp.Pubdate != nil {
 			b.Pubdate = inp.Pubdate
 		}
-		if inp.IsVideo {
-			if cov := downloadImage(inp.Cover, "covers", 15*time.Second); cov != "" {
-				b.Cover = cov
-			}
-		} else {
-			b.Cover = inp.Cover
-		}
+		// 封面/图标改为异步下载：先存原始值（远程 URL），后台下载完成后回写本地路径
+		b.Cover = inp.Cover
 		b.IsVideo = inp.IsVideo
 		b.Duration = strings.TrimSpace(inp.Duration)
 		if err := syncBookmarkTags(DB, &b, inp.TagIDs, inp.Tags, def.ID); err != nil {
@@ -153,6 +148,8 @@ func createBookmark(c *gin.Context) {
 		}
 		DB.Save(&b)
 		upsertBookmarkDetail(DB, b.ID, inp.Detail)
+		// 图标/封面异步下载，不阻塞请求
+		asyncDownloadBookmarkResources(DB, &b, inp.Favicon, inp.Cover)
 		DB.Preload("Category").Preload("TagsR").Preload("Detail").First(&b, b.ID)
 		c.JSON(200, gin.H{"message": "已存在（已更新）", "bookmark": b})
 		return
@@ -180,18 +177,18 @@ func createBookmark(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	b.Favicon = downloadIcon(inp.URL, inp.Favicon, 15*time.Second)
-	if inp.IsVideo {
-		b.Cover = downloadImage(inp.Cover, "covers", 15*time.Second)
-	} else {
-		b.Cover = inp.Cover
+	if inp.Favicon != "" {
+		b.Favicon = inp.Favicon
 	}
+	b.Cover = inp.Cover
 	if err := syncBookmarkTags(DB, &b, inp.TagIDs, inp.Tags, def.ID); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
 	DB.Save(&b)
 	upsertBookmarkDetail(DB, b.ID, inp.Detail)
+	// 图标/封面异步下载，不阻塞请求
+	asyncDownloadBookmarkResources(DB, &b, inp.Favicon, inp.Cover)
 	DB.Preload("Category").Preload("TagsR").Preload("Detail").First(&b, b.ID)
 	c.JSON(201, gin.H{"message": "收藏成功", "bookmark": b})
 }
@@ -241,6 +238,98 @@ func searchBookmarks(c *gin.Context) {
 	c.JSON(200, gin.H{"items": list, "total": total})
 }
 
+// exportBookmarks 导出当前筛选条件下的全部书签（Excel .xlsx 下载），筛选参数与 list/search 一致，不分页
+func exportBookmarks(c *gin.Context) {
+	base := DB.Model(&Bookmark{})
+	if cat := c.Query("category_id"); cat != "" {
+		if id, err := strconv.Atoi(cat); err == nil {
+			base = base.Where("category_id = ?", id)
+		}
+	}
+	if ids := parseTagIDs(c.QueryArray("tag_id")); len(ids) > 0 {
+		base = applyTagFilter(base, ids)
+	}
+	if c.Query("is_video") == "1" {
+		base = base.Where("is_video = ?", true)
+	}
+	if c.Query("favorite") == "1" {
+		base = base.Where("is_favorite = ?", true)
+	}
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		like := "%" + q + "%"
+		base = base.Where("title LIKE ? OR url LIKE ? OR tags LIKE ?", like, like, like)
+	}
+	var list []Bookmark
+	base.Order("created_at desc").
+		Preload("Category").Preload("TagsR").Preload("Detail").Find(&list)
+
+	// 生成 Excel（.xlsx）
+	f := excelize.NewFile()
+	defer f.Close()
+	sheet := "书签"
+	f.SetSheetName("Sheet1", sheet)
+
+	headers := []string{"ID", "标题", "网址", "分类", "标签", "作者", "合集", "发布时间", "时长", "是否视频", "是否收藏", "图标", "封面", "详情", "创建时间"}
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+	}
+	for i, b := range list {
+		row := i + 2
+		cat, tags, detail, pub := "", "", "", ""
+		if b.Category != nil {
+			cat = b.Category.Name
+		}
+		for _, t := range b.TagsR {
+			if tags != "" {
+				tags += ", "
+			}
+			tags += t.Name
+		}
+		if b.Detail != nil {
+			detail = b.Detail.Content
+		}
+		if b.Pubdate != nil {
+			pub = *b.Pubdate
+		}
+		video, fav := "否", "否"
+		if b.IsVideo {
+			video = "是"
+		}
+		if b.IsFavorite {
+			fav = "是"
+		}
+		vals := []interface{}{
+			b.ID, b.Title, b.URL, cat, tags, b.Author, b.Collection, pub,
+			b.Duration, video, fav, b.Favicon, b.Cover, detail,
+			b.CreatedAt.Format("2006-01-02 15:04:05"),
+		}
+		for j, v := range vals {
+			cell, _ := excelize.CoordinatesToCellName(j+1, row)
+			f.SetCellValue(sheet, cell, v)
+		}
+	}
+	// 列宽
+	widths := []float64{8, 40, 50, 12, 20, 14, 14, 14, 10, 10, 10, 30, 30, 60, 20}
+	for i, w := range widths {
+		col, _ := excelize.ColumnNumberToName(i + 1)
+		f.SetColWidth(sheet, col, col, w)
+	}
+	// 表头加粗
+	if styleID, err := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}}); err == nil {
+		f.SetRowStyle(sheet, 1, 1, styleID)
+	}
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "导出失败"})
+		return
+	}
+	fname := fmt.Sprintf("bookmarks-%s.xlsx", time.Now().Format("20060102-150405"))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fname))
+	c.Data(200, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buf.Bytes())
+}
+
 // getBookmark 按 id 获取单个书签（含分类、标签、详情），供前端详情页 /page/{id} 使用
 func getBookmark(c *gin.Context) {
 	id := c.Param("id")
@@ -276,10 +365,9 @@ func setFavorite(c *gin.Context) {
 	c.JSON(200, gin.H{"bookmark": b})
 }
 
-// deleteBookmark 删除书签（级联删除详情与多对多关联）
+// deleteBookmark 删除书签（软删除 → 进回收站；详情/标签关联保留，恢复后完整还原）
 func deleteBookmark(c *gin.Context) {
 	id := c.Param("id")
-	DB.Where("bookmark_id = ?", id).Delete(&BookmarkDetail{})
 	res := DB.Delete(&Bookmark{}, id)
 	if res.Error != nil {
 		c.JSON(500, gin.H{"error": res.Error.Error()})
@@ -289,7 +377,72 @@ func deleteBookmark(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "书签不存在"})
 		return
 	}
-	c.JSON(200, gin.H{"message": "删除成功"})
+	c.JSON(200, gin.H{"message": "已移入回收站"})
+}
+
+// listTrash 回收站列表：已软删除的书签（按删除时间倒序）
+func listTrash(c *gin.Context) {
+	var list []Bookmark
+	DB.Unscoped().Where("deleted_at IS NOT NULL").Order("deleted_at desc").
+		Preload("Category").Preload("TagsR").Find(&list)
+
+	type trashItem struct {
+		ID        uint     `json:"id"`
+		Title     string   `json:"title"`
+		URL       string   `json:"url"`
+		Category  string   `json:"category"`
+		Tags      []string `json:"tags"`
+		DeletedAt string   `json:"deleted_at"`
+	}
+	items := make([]trashItem, 0, len(list))
+	for _, b := range list {
+		cat := ""
+		if b.Category != nil {
+			cat = b.Category.Name
+		}
+		tags := make([]string, 0, len(b.TagsR))
+		for _, t := range b.TagsR {
+			tags = append(tags, t.Name)
+		}
+		del := ""
+		if b.DeletedAt.Valid {
+			del = b.DeletedAt.Time.Format("2006-01-02 15:04:05")
+		}
+		items = append(items, trashItem{ID: b.ID, Title: b.Title, URL: b.URL, Category: cat, Tags: tags, DeletedAt: del})
+	}
+	c.JSON(200, gin.H{"items": items, "total": len(items)})
+}
+
+// restoreBookmark 恢复回收站中的书签（清除软删除标记，详情/标签/收藏等全部还原）
+func restoreBookmark(c *gin.Context) {
+	id := c.Param("id")
+	res := DB.Unscoped().Model(&Bookmark{}).Where("id = ?", id).Update("deleted_at", nil)
+	if res.Error != nil {
+		c.JSON(500, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(404, gin.H{"error": "书签不存在"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "已恢复"})
+}
+
+// purgeBookmark 彻底删除（不可恢复）：清除书签、详情与标签关联
+func purgeBookmark(c *gin.Context) {
+	id := c.Param("id")
+	DB.Where("bookmark_id = ?", id).Delete(&BookmarkDetail{})
+	DB.Exec("DELETE FROM bookmark_tags WHERE bookmark_id = ?", id)
+	res := DB.Unscoped().Delete(&Bookmark{}, id)
+	if res.Error != nil {
+		c.JSON(500, gin.H{"error": res.Error.Error()})
+		return
+	}
+	if res.RowsAffected == 0 {
+		c.JSON(404, gin.H{"error": "书签不存在"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "已彻底删除"})
 }
 
 // updateBookmark 修改书签（按 id 更新）；支持 category_id 与 tag_ids
@@ -428,16 +581,12 @@ func batchUpdateBookmarks(c *gin.Context) {
 		return
 	}
 
-	// 删除（级联清理详情与多对多关联）
+	// 删除（软删除 → 进回收站；详情/标签关联保留，恢复后可完整还原）
 	if inp.Delete {
 		var ids []int
 		base.Pluck("id", &ids)
-		for _, id := range ids {
-			DB.Where("bookmark_id = ?", id).Delete(&BookmarkDetail{})
-			DB.Exec("DELETE FROM bookmark_tags WHERE bookmark_id = ?", id)
-			DB.Delete(&Bookmark{}, id)
-		}
-		c.JSON(200, gin.H{"affected": len(ids), "message": "已删除 " + strconv.Itoa(len(ids)) + " 条书签"})
+		DB.Delete(&Bookmark{}, ids)
+		c.JSON(200, gin.H{"affected": len(ids), "message": "已移入回收站 " + strconv.Itoa(len(ids)) + " 条书签"})
 		return
 	}
 
@@ -687,6 +836,26 @@ func deleteTag(c *gin.Context) {
 	DB.Exec("DELETE FROM bookmark_tags WHERE tag_id = ?", tag.ID)
 	DB.Delete(&tag)
 	c.JSON(200, gin.H{"message": "删除成功"})
+}
+
+// listProtected 返回默认配置中受保护（不可删除）的分类与标签，供前端删除前查询提示。
+// 来源：编译进二进制的 backend/tags.toml（系统默认）+ 运行时 data/default-tags.toml（用户自定义）。
+func listProtected(c *gin.Context) {
+	cats := make([]string, 0, len(protectedCategories))
+	for name := range protectedCategories {
+		cats = append(cats, name)
+	}
+	type protectedTag struct {
+		Category string `json:"category"`
+		Name     string `json:"name"`
+	}
+	tags := make([]protectedTag, 0, len(protectedTags))
+	for catName, m := range protectedTags {
+		for tagName := range m {
+			tags = append(tags, protectedTag{Category: catName, Name: tagName})
+		}
+	}
+	c.JSON(200, gin.H{"categories": cats, "tags": tags})
 }
 
 // （提取规则功能已迁移到浏览器插件本地 storage，后端不再持久化 extract_rule）

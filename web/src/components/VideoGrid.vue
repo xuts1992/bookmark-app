@@ -55,7 +55,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
       <a class="vcover" :href="b.url" target="_blank" rel="noopener">
         <img v-if="hasCover(b)" :src="b.cover" :alt="b.title" @error="onImgError(b)" />
         <div class="vcover-ph" v-else>
-          <img :src="'/resource/icons/bilibili.com.ico'" alt="B站视频" />
+          <img :src="'/resource/icons/www.bilibili.com.ico'" alt="B站视频" />
         </div>
         <span class="vduration" v-if="b.duration">{{ b.duration }}</span>
         <div class="vplay">

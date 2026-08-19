@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +15,7 @@ import (
 	"github.com/getlantern/systray"
 )
 
-const serverPort = "9000"
+const serverPort = "9800"
 
 // 单实例锁：命名 Mutex，进程退出时由系统自动释放
 const singleInstanceMutexName = "bookmark-tray-single-instance"
@@ -119,20 +117,9 @@ func onExit() {
 var serverCmd *exec.Cmd
 var mStart, mStop *systray.MenuItem
 
-// loadIcon 读取可执行文件同级目录的图标：优先多尺寸 icon.ico（构建时生成），
-// 缺失时退回 icon.png 并包装为 Windows ICO（1024px 大图可能不显示，仅作兜底）
+// loadIcon 返回编译期内嵌的托盘图标（iconBytes 由 scripts/genicon 生成），运行时不依赖 exe 同级文件
 func loadIcon() []byte {
-	ico := filepath.Join(exeDir(), "icon.ico")
-	if data, err := os.ReadFile(ico); err == nil {
-		return data
-	}
-	p := filepath.Join(exeDir(), "icon.png")
-	data, err := os.ReadFile(p)
-	if err != nil {
-		fmt.Println("读取托盘图标失败:", err)
-		return nil
-	}
-	return pngToIco(data)
+	return iconBytes
 }
 
 // serverRunning 检测本地服务端口是否已在监听（避免重复启动）
@@ -178,7 +165,8 @@ func startServer() {
 		fmt.Println("未找到服务程序:", bin)
 		return
 	}
-	cmd := exec.Command(bin)
+	// server 子命令显式传 -port（本项目统一用 9800，与 CLI 默认一致）；dbpath 用默认 data/bookmarks.db（相对 cmd.Dir）
+	cmd := exec.Command(bin, "server", "-port", serverPort)
 	cmd.Dir = exeDir()
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
@@ -224,18 +212,3 @@ func openBrowser(u string) {
 	_ = cmd.Start()
 }
 
-// pngToIco 将 PNG 字节包装为 Windows ICO 容器（内嵌 PNG），供 systray.SetIcon 使用
-func pngToIco(png []byte) []byte {
-	var buf bytes.Buffer
-	buf.Write([]byte{0, 0, 1, 0, 1, 0}) // ICONDIR: reserved, type=1, count=1
-	buf.WriteByte(0)                    // width (0 表示 256)
-	buf.WriteByte(0)                    // height
-	buf.WriteByte(0)                    // 颜色数
-	buf.WriteByte(0)                    // 保留
-	binary.Write(&buf, binary.LittleEndian, uint16(1))  // planes
-	binary.Write(&buf, binary.LittleEndian, uint16(32)) // bit count
-	binary.Write(&buf, binary.LittleEndian, uint32(len(png))) // 资源字节数
-	binary.Write(&buf, binary.LittleEndian, uint32(22))       // 图像偏移
-	buf.Write(png)
-	return buf.Bytes()
-}

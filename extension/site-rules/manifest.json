@@ -1,6 +1,7 @@
 {
   "rules": [
     "site-rules/bilibili.js",
-    "site-rules/csdn.js"
+    "site-rules/csdn.js",
+    "site-rules/youtube.js"
   ]
 }

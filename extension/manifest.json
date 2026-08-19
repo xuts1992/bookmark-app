@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "一键收藏当前网页到你的个人书签库",
   "permissions": ["activeTab", "storage", "contextMenus", "notifications", "scripting"],
-  "host_permissions": ["http://localhost:9000/*"],
+  "host_permissions": ["http://localhost:9800/*"],
   "action": {
     "default_title": "收藏当前网页 / 打开抽屉",
     "default_icon": {

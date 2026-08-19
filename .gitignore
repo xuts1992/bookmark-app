@@ -7,6 +7,7 @@
 # Go 编译产物
 backend/bookmark-server
 backend/bookmark-server.exe
+backend/start.exe 
 backend/bookmarks.db 
 
 # 前端依赖 / 构建缓存
@@ -28,6 +29,16 @@ dev-self.bat
 
 # 其他
 backend/.log
+backend/server.log
 backend/resource/ 
 backend/tray/*.exe
 build/
+
+# data 目录：保留目录层级（.gitkeep 占位）与 *.toml 配置，数据库/日志/下载的图片不入库
+backend/data/*.db*
+backend/data/logs/*
+!backend/data/logs/.gitkeep
+backend/data/resource/covers/*
+!backend/data/resource/covers/.gitkeep
+backend/data/resource/icons/*
+!backend/data/resource/icons/.gitkeep

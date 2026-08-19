@@ -467,9 +467,13 @@ export function useApp() {
   // 键盘翻页：PageUp 上一页 / PageDown 下一页（输入框内不触发）
   function onKey(e) {
     const tag = (e.target && e.target.tagName) || ''
-    if (e.key === 'Escape' && sidebarOpen.value) {
-      sidebarOpen.value = false
-      return
+    if (e.key === 'Escape') {
+      // 同时支持关闭筛选侧边栏与批量侧边栏，避免状态残留导致另一按钮被禁用
+      if (batchOpen.value || sidebarOpen.value) {
+        batchOpen.value = false
+        sidebarOpen.value = false
+        return
+      }
     }
     if (tag === 'INPUT' || tag === 'TEXTAREA') return
     if (e.key === 'PageUp') {
@@ -542,6 +546,6 @@ export function useApp() {
     toggleCategory,
     goAdmin, selectTag, closeForm, submitForm, onUrlBlur, onPreviewError,
     toggleFavoriteFilter, toggleFavorite,
-    saveDetail, refresh
+    saveDetail, refresh, currentFilter
   }
 }

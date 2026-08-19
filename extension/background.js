@@ -81,7 +81,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'save-bookmark') {
     const result = await chrome.storage.local.get(['serverUrl']);
-    const serverUrl = result.serverUrl || 'http://localhost:9000';
+    const serverUrl = result.serverUrl || 'http://localhost:9800';
 
     try {
       const res = await fetch(serverUrl + '/api/bookmarks', {

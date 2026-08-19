@@ -5,7 +5,7 @@
 用法:
   python fetch_bilibili.py --inspect        # 只打印前 2 条字段，不入库
   python fetch_bilibili.py                  # 抓取前 20 条并 POST 到后端
-  python fetch_bilibili.py --count 10 --base http://localhost:9000
+  python fetch_bilibili.py --count 10 --base http://localhost:9800
 """
 import argparse
 import html
@@ -99,7 +99,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--inspect", action="store_true", help="只打印前 2 条，不入库")
     ap.add_argument("--count", type=int, default=20)
-    ap.add_argument("--base", default="http://localhost:9000")
+    ap.add_argument("--base", default="http://localhost:9800")
     args = ap.parse_args()
 
     raw = http_get(RANK_URL)

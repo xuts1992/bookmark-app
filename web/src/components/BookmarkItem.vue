@@ -77,10 +77,7 @@ function formatTime(v) {
 <template>
   <div class="bookmark-item" :class="{ 'is-video': bookmark.is_video }">
       <div class="bookmark-icon">
-        <!-- 视频：左侧显示 Bilibili 小电视图标（本地 ico） -->
-        <img v-if="bookmark.is_video" class="bili-icon" :src="'/resource/icons/bilibili.com.ico'" alt="B站视频" />
-        <img v-else-if="bookmark.cover" :src="bookmark.cover" :alt="bookmark.title" @error="onImgError" />
-        <img v-else-if="bookmark.favicon" :src="bookmark.favicon" :alt="bookmark.title" @error="onImgError" />
+        <img v-if="bookmark.favicon" :src="bookmark.favicon" :alt="bookmark.title" @error="onImgError" />
         <span v-else class="placeholder">🔖</span>
       </div>
       <div class="bookmark-info">

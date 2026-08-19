@@ -24,4 +24,7 @@ body {
 button {
   font-family: inherit;
   cursor: pointer;
+  /* 全局禁止按钮文字被选中：防止鼠标连点/快速双击时选中按钮文字 */
+  user-select: none;
+  -webkit-user-select: none;
 }

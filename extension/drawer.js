@@ -8,7 +8,7 @@
 
   const DRAWER_ID = '__bm_drawer_root';
   const STYLE_ID = '__bm_drawer_style';
-  const DEFAULT_SERVER = 'http://localhost:9000';
+  const DEFAULT_SERVER = 'http://localhost:9800';
 
   // 字段选取状态（需在顶部声明：早期重复注入分支会调用 closeDrawer->cancelFieldPick）
   let pickState = null;
@@ -128,7 +128,7 @@
     '  <div class="bm-status" id="bm-status"></div>' +
     '  <div class="bm-set">' +
     '    <label>服务器</label>' +
-    '    <input id="bm-server" placeholder="http://localhost:9000">' +
+    '    <input id="bm-server" placeholder="http://localhost:9800">' +
     '  </div>' +
     '  <button class="bm-btn bm-extract" id="bm-extract">🛠️ 提取辅助工具</button>' +
     '</div>';

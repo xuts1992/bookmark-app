@@ -18,7 +18,8 @@ var DB *gorm.DB
 type Bookmark struct {
 	ID         uint      `json:"id" gorm:"primaryKey"`
 	Title      string    `json:"title" gorm:"not null"`
-	URL        string    `json:"url" gorm:"uniqueIndex;not null"`
+	// url 不用唯一索引：软删除后已删记录仍占索引，会导致「删了再收藏同一网址」失败；逻辑唯一性由 createBookmark 的 Where(url) 查重保证
+	URL        string    `json:"url" gorm:"not null"`
 	Favicon    string    `json:"favicon" gorm:"default:''"`
 	Author     string    `json:"author" gorm:"default:''"`     // 作者
 	Collection string    `json:"collection" gorm:"default:''"` // 合集
@@ -33,6 +34,8 @@ type Bookmark struct {
 	TagsR      []Tag     `json:"tag_list,omitempty" gorm:"many2many:bookmark_tags;"`
 	Detail     *BookmarkDetail `json:"detail,omitempty" gorm:"foreignKey:BookmarkID"`
 	CreatedAt  time.Time `json:"created_at"`
+	// 软删除：删除进回收站；普通查询自动排除已删除行，回收站用 Unscoped 访问
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 // BookmarkDetail 书签详情表（一对一外键关联 Bookmark，Content 存放大文本）

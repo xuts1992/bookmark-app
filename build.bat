@@ -73,6 +73,9 @@ echo [3/4] 编译托盘程序 start.exe...
 cd /d "%ROOT%\backend\tray"
 REM -H windowsgui: GUI 子系统，启动不弹黑框；rsrc.syso 提供内嵌图标
 REM 用最新 icon.ico 重新生成内嵌图标资源，避免文件图标与运行图标不一致
+copy /Y ..\icon.ico .\icon.ico >nul 2>&1
+REM 由 genicon 重新生成字节数组（编译期内嵌托盘图标，规避子包 //go:embed 工具链问题）
+go run "%ROOT%\backend\scripts\genicon" "%ROOT%\backend\tray\icon.ico" "%ROOT%\backend\tray\icon_data.go" >nul
 if exist rsrc.syso del /f rsrc.syso
 rsrc -ico ..\icon.ico -o rsrc.syso
 if errorlevel 1 goto rsrc_warn
@@ -97,8 +100,9 @@ echo [4/4] 收集运行所需文件到 build 目录...
 set "BACK=%ROOT%\backend"
 set "BUILD=%ROOT%\build"
 
-REM 停止可能占用 exe / static / resource 文件的旧服务进程
+REM 停止可能占用 exe / static / resource 文件的旧服务进程与托盘
 taskkill /IM bookmark-server.exe /F >nul 2>&1
+taskkill /IM start.exe /F >nul 2>&1
 
 REM 清空并重建 build 目录
 if not exist "%BUILD%" goto build_clean_ok
@@ -106,13 +110,10 @@ powershell -NoProfile -Command "Remove-Item -Recurse -Force '%BUILD%' -ErrorActi
 :build_clean_ok
 mkdir "%BUILD%" >nul 2>&1
 
-REM 复制后端产物与运行所需文件到 build（保留 backend 源：icon.ico 供 rsrc 重建、static 供 dev 运行、default-tags.toml 为用户配置）
+REM 复制后端产物与运行所需文件到 build（static 与 icon.ico 已 embed 进 exe，无需复制；data 为用户数据目录）
 copy /Y "%BACK%\bookmark-server.exe" "%BUILD%\" >nul
 copy /Y "%BACK%\start.exe" "%BUILD%\" >nul
-copy /Y "%BACK%\icon.ico" "%BUILD%\" >nul
-xcopy /E /I /Y "%BACK%\static" "%BUILD%\static" >nul
-xcopy /E /I /Y "%BACK%\resource" "%BUILD%\resource" >nul 2>&1
-copy /Y "%BACK%\default-tags.toml" "%BUILD%\" >nul 2>&1
+xcopy /E /I /Y "%BACK%\data" "%BUILD%\data" >nul 2>&1
 xcopy /E /I /Y "%ROOT%\extension" "%BUILD%\extension" >nul
 
 REM 校验产物齐全
@@ -121,11 +122,6 @@ echo [失败] bookmark-server.exe 未就位
 pause
 exit /b 1
 :chk1_ok
-if exist "%BUILD%\static\index.html" goto chk2_ok
-echo [失败] static\index.html 未就位
-pause
-exit /b 1
-:chk2_ok
 if exist "%BUILD%\extension\manifest.json" goto chk4_ok
 echo [失败] extension 未就位
 pause

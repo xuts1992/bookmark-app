@@ -91,7 +91,7 @@ function formatTime(v) {
         <span class="date" v-if="bookmark.pubdate" title="发布时间">🗓 {{ bookmark.pubdate }}</span>
         <span class="date" :title="bookmark.created_at">{{ formatTime(bookmark.created_at) }}</span>
         <span class="video-badge" v-if="bookmark.is_video">
-          <img :src="'/resource/icons/bilibili.com.ico'" alt="" /> 视频
+          <img :src="'/resource/icons/www.bilibili.com.ico'" alt="" /> 视频
         </span>
         <span class="duration-badge" v-if="bookmark.is_video && bookmark.duration">{{ bookmark.duration }}</span>
       </div>
@@ -293,6 +293,7 @@ function formatTime(v) {
 }
 .detail-content {
   word-break: break-word;
+  white-space: pre-wrap; /* 保留详情文本中的换行（desc/详情多行内容） */
   font-size: 15px;
   line-height: 1.7;
   color: var(--text, #333);

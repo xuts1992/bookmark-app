@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync"
 	"time"
 
@@ -25,13 +24,13 @@ func startSyncScheduler(db *gorm.DB, s Setting) {
 		syncStop = nil
 	}
 	if !s.SyncEnabled || s.SyncIntervalMinutes <= 0 {
-		log.Println("资源定时同步：未启用（开关关闭或间隔无效）")
+		syncLog.Println("资源定时同步：未启用（开关关闭或间隔无效）")
 		return
 	}
 	stop := make(chan struct{})
 	syncStop = stop
 	interval := time.Duration(s.SyncIntervalMinutes) * time.Minute
-	log.Printf("资源定时同步：已启用，每 %d 分钟执行一次", s.SyncIntervalMinutes)
+	syncLog.Printf("资源定时同步：已启用，每 %d 分钟执行一次", s.SyncIntervalMinutes)
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -40,7 +39,7 @@ func startSyncScheduler(db *gorm.DB, s Setting) {
 			case <-stop:
 				return
 			case <-ticker.C:
-				log.Println("资源定时同步：开始本地化所有书签的图标与封面")
+				syncLog.Println("资源定时同步：开始本地化所有书签的图标与封面")
 				localizeExistingResources(db)
 			}
 		}

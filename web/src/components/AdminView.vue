@@ -6,12 +6,13 @@ const emit = defineEmits(['edit', 'add'])
 
 const loading = ref(false)
 
-// 子页 path 映射：分类 /admin/category、标签 /admin/tag、设置 /admin/settings
+// 子页 path 映射：分类 /admin/category、标签 /admin/tag、设置 /admin/settings、回收站 /admin/trash
 // （已移除「书签」页 /admin/bookmarks）
 const tabPaths = {
   categories: '/admin/category',
   tags: '/admin/tag',
-  settings: '/admin/settings'
+  settings: '/admin/settings',
+  trash: '/admin/trash'
 }
 // 根据当前路径推导激活的子页（支持深链接与浏览器前进后退）
 function tabFromPath() {
@@ -19,6 +20,7 @@ function tabFromPath() {
   if (seg === 'tag') return 'tags'
   if (seg === 'category') return 'categories'
   if (seg === 'settings') return 'settings'
+  if (seg === 'trash') return 'trash'
   return 'categories' // /admin 或 /admin/bookmarks 均归为分类（书签页已移除）
 }
 const tab = ref(tabFromPath())
@@ -26,6 +28,7 @@ const tab = ref(tabFromPath())
 // 切换到指定子页：更新本地 tab 并改写地址栏 path（pushState，不刷新页面）
 function goTab(name) {
   tab.value = name
+  if (name === 'trash') loadTrash()
   const path = tabPaths[name]
   if (location.pathname.replace(/\/+$/, '') !== path) {
     history.pushState({ tab: name }, '', path)
@@ -38,6 +41,9 @@ function onPopState() {
 const bookmarks = ref([])
 const categories = ref([])
 const tags = ref([])
+const trashItems = ref([])
+// 默认配置中受保护（不可删除）的分类/标签：{ categories: ['默认'], tags: [{category, name}] }
+const protectedList = ref({ categories: [], tags: [] })
 
 const cName = ref('')
 const tName = ref('')
@@ -93,10 +99,11 @@ async function saveSettings() {
 async function loadAll() {
   loading.value = true
   try {
-    const [b, c, t] = await Promise.all([api.list(2000, 0), api.categories(), api.tags()])
+    const [b, c, t, p] = await Promise.all([api.list(2000, 0), api.categories(), api.tags(), api.protected()])
     bookmarks.value = b.items
     categories.value = c
     tags.value = t
+    protectedList.value = p
   } catch (e) {
     showToast('加载失败：' + e.message)
   } finally {
@@ -106,6 +113,7 @@ async function loadAll() {
 onMounted(() => {
   loadAll()
   loadSettings()
+  if (tab.value === 'trash') loadTrash()
   window.addEventListener('popstate', onPopState)
 })
 onUnmounted(() => {
@@ -149,6 +157,11 @@ async function saveEditCat() {
   }
 }
 async function deleteCat(c) {
+  // 删除前先查询：分类是否在默认配置（tags.toml / default-tags.toml）中 → 禁止删除
+  if (protectedList.value.categories.includes(c.name)) {
+    showToast(`「${c.name}」在默认配置中，不允许删除（需先编辑配置文件）`)
+    return
+  }
   if (!confirm(`确认删除分类「${c.name}」？其下书签将移至「默认」，标签将被删除。`)) return
   try {
     await api.deleteCategory(c.id)
@@ -190,6 +203,14 @@ async function saveEditTag() {
   }
 }
 async function deleteTag(t) {
+  // 删除前先查询：标签是否在默认配置（tags.toml / default-tags.toml）中 → 禁止删除
+  const inConfig = protectedList.value.tags.some(
+    (p) => p.category === catName(t.category_id) && p.name === t.name
+  )
+  if (inConfig) {
+    showToast(`标签「${t.name}」在默认配置中，不允许删除（需先编辑配置文件）`)
+    return
+  }
   if (!confirm(`确认删除标签「${t.name}」？`)) return
   try {
     await api.deleteTag(t.id)
@@ -197,6 +218,36 @@ async function deleteTag(t) {
     await loadAll()
   } catch (e) {
     showToast(e.message)
+  }
+}
+
+// —— 回收站 ——
+async function loadTrash() {
+  try {
+    const d = await api.trash()
+    trashItems.value = d.items
+  } catch (e) {
+    showToast('回收站加载失败：' + e.message)
+  }
+}
+async function restoreItem(id) {
+  try {
+    await api.restoreTrash(id)
+    showToast('已恢复')
+    await loadTrash()
+    await loadAll() // 同步书签计数
+  } catch (e) {
+    showToast('恢复失败：' + e.message)
+  }
+}
+async function purgeItem(b) {
+  if (!confirm(`彻底删除「${b.title}」？此操作不可恢复！`)) return
+  try {
+    await api.purgeTrash(b.id)
+    showToast('已彻底删除')
+    await loadTrash()
+  } catch (e) {
+    showToast('删除失败：' + e.message)
   }
 }
 </script>
@@ -218,6 +269,9 @@ async function deleteTag(t) {
       </button>
       <button :class="{ active: tab === 'settings' }" @click="goTab('settings')">
         设置
+      </button>
+      <button :class="{ active: tab === 'trash' }" @click="goTab('trash')">
+        🗑️ 回收站 ({{ trashItems.length }})
       </button>
     </nav>
 
@@ -325,6 +379,33 @@ async function deleteTag(t) {
           {{ savingSettings ? '保存中...' : '保存设置' }}
         </button>
       </div>
+    </section>
+
+    <!-- 回收站 -->
+    <section v-if="tab === 'trash'" class="panel">
+      <h2 class="set-title">🗑️ 回收站</h2>
+      <p class="set-desc">删除的书签暂存在这里，可随时恢复；「彻底删除」后不可找回。</p>
+      <div class="list" v-if="trashItems.length">
+        <div class="row head">
+          <span class="c-title">标题</span>
+          <span class="c-cat">分类</span>
+          <span class="c-tags">标签</span>
+          <span class="c-act">操作</span>
+        </div>
+        <div class="row" v-for="b in trashItems" :key="b.id">
+          <span class="c-title">
+            <a :href="b.url" target="_blank" rel="noopener">{{ b.title }}</a>
+            <small>删除于 {{ b.deleted_at }}</small>
+          </span>
+          <span class="c-cat">{{ b.category }}</span>
+          <span class="c-tags">{{ b.tags.join(', ') || '—' }}</span>
+          <span class="c-act">
+            <button class="lnk" @click="restoreItem(b.id)">恢复</button>
+            <button class="lnk danger" @click="purgeItem(b)">彻底删除</button>
+          </span>
+        </div>
+      </div>
+      <div class="empty" v-else>回收站是空的</div>
     </section>
 
     <div class="toast" :class="{ show: toast }">{{ toast }}</div>

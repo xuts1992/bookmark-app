@@ -637,19 +637,14 @@
 .sidebar-fab:disabled:active {
   transform: translateY(-50%);
 }
-/* 侧边栏展开时，主内容（标题区 + 容器）整体向右推开，不使用遮罩/模态框 */
-.sidebar-open .header {
-  margin-left: 280px;
-}
+/* 侧边栏展开时，仅数据区（.container）向右推开，header 保持原位（侧边栏为 fixed 盖在其上方）。
+   margin-left=344px = 侧边栏 280 + FAB 按钮 48 + 16 间隙，保证按钮(296~344)落在侧边栏与数据区之间的空白带，不覆盖数据 */
 .sidebar-open .container {
-  margin-left: 280px;
+  margin-left: 344px;
 }
-/* 批量操作侧边栏展开时，主内容同样向右推开 */
-.batch-open .header {
-  margin-left: 280px;
-}
+/* 批量操作侧边栏展开时，数据区同样向右推开 */
 .batch-open .container {
-  margin-left: 280px;
+  margin-left: 344px;
 }
 /* 左侧筛选侧边栏（从左侧滑出） */
 .sidebar {

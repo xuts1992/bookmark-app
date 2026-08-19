@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
-// 开发：Vite 跑在 3000 端口，/api 代理到 Go 后端 9000
+// 开发：Vite 跑在 3000 端口，/api 代理到 Go 后端 9800
 // 构建：输出到 ../backend/static，由 Go 程序对外提供静态网页
 export default defineConfig({
   plugins: [vue()],
@@ -16,12 +16,12 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:9000',
+        target: 'http://localhost:9800',
         changeOrigin: true
       },
       // 本地资源（图标/封面）：开发态也代理到 Go 后端，便于预览已下载的资源
       '/resource': {
-        target: 'http://localhost:9000',
+        target: 'http://localhost:9800',
         changeOrigin: true
       }
     }

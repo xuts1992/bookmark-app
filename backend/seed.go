@@ -36,10 +36,16 @@ var (
 //go:embed tags.toml
 var systemDefaultTags string
 
-// defaultTagsPath 返回用户自定义配置（default-tags.toml）路径：优先取可执行文件同级目录，
-// 这样无论从哪个工作目录启动都能定位到配置；找不到时再回退到当前目录与上级目录。
+// defaultTagsPath 返回用户自定义配置（default-tags.toml）路径：用户数据统一放在 data 目录，
+// 优先取 data/default-tags.toml（exe 同级 → 当前目录 → 上级目录），找不到再回退旧位置（历史部署兼容）。
 func defaultTagsPath() string {
 	var candidates []string
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "data", "default-tags.toml"))
+	}
+	candidates = append(candidates, filepath.Join("data", "default-tags.toml"))
+	candidates = append(candidates, filepath.Join("..", "data", "default-tags.toml"))
+	// 旧位置回退（历史部署：default-tags.toml 与 exe 同级 / 当前目录 / 上级目录）
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "default-tags.toml"))
 	}
@@ -53,7 +59,7 @@ func defaultTagsPath() string {
 	if len(candidates) > 0 {
 		return candidates[0]
 	}
-	return "default-tags.toml"
+	return filepath.Join("data", "default-tags.toml")
 }
 
 // loadDefaultTags 合并两类配置并填充受保护集合（供删除拦截使用）：
